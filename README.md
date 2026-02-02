@@ -75,9 +75,9 @@ kcs --list
 
 Output:
 ```
-[config] staging-guc1.tail1beac.ts.net (ns: default)
-[config] prod-us-east.example.com (ns: production)
-[dev-cluster] dev-context (ns: default)
+[config] prod-cluster (ns: default)
+[config] staging-cluster (ns: staging)
+[dev-config] dev-cluster (ns: default)
 ```
 
 ### Show Current Context
@@ -88,7 +88,7 @@ kcs --current
 
 Output:
 ```
-staging-guc1.tail1beac.ts.net (kubeconfig: config)
+prod-cluster (kubeconfig: config)
 ```
 
 ## How It Works
