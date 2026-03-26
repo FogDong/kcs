@@ -42,8 +42,8 @@ func SwitchSession(ctx parser.ContextInfo) (string, error) {
 	}, ctx.Name)
 	configPath := filepath.Join(kcsConfigDir, safeName)
 
-	// If file exists, verify its state and reuse it rather than overwriting
-	if _, err := os.Stat(configPath); err != nil {
+	_, statErr := os.Stat(configPath)
+	if os.IsNotExist(statErr) {
 		full, err := clientcmd.LoadFromFile(sourceFile)
 		if err != nil {
 			return "", fmt.Errorf("failed to load kubeconfig: %w", err)
@@ -71,6 +71,8 @@ func SwitchSession(ctx parser.ContextInfo) (string, error) {
 		if err := os.Chmod(configPath, 0400); err != nil {
 			return "", fmt.Errorf("failed to set kubeconfig read-only: %w", err)
 		}
+	} else if statErr != nil {
+		return "", fmt.Errorf("failed to stat kubeconfig: %w", statErr)
 	} else if err := verifySessionKubeconfig(configPath, ctx.Name); err != nil {
 		return "", fmt.Errorf("kubeconfig at %s has unexpected state: %w\n\nTo fix, run: rm %s", configPath, err, configPath)
 	}
