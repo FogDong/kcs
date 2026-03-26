@@ -44,7 +44,7 @@ func SwitchEnvVar(ctx parser.ContextInfo) (string, error) {
 	// If file exists, verify its state and reuse it rather than overwriting
 	if _, err := os.Stat(configPath); err == nil {
 		if err := verifyEnvVarKubeconfig(configPath, ctx.Name); err != nil {
-			return "", fmt.Errorf("kubeconfig at %s has unexpected state: %w", configPath, err)
+			return "", fmt.Errorf("kubeconfig at %s has unexpected state: %w\n\nTo fix, run: rm %s", configPath, err, configPath)
 		}
 		return configPath, nil
 	}
