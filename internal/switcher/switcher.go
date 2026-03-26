@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/FogDong/kcs/internal/parser"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
 const kcsConfigName = "kcs-config"
@@ -29,23 +31,73 @@ func SwitchEnvVar(ctx parser.ContextInfo) (string, error) {
 	}, ctx.Name)
 	tmpPath := filepath.Join(os.TempDir(), "kcs-"+safeName)
 
-	data, err := os.ReadFile(sourceFile)
+	full, err := clientcmd.LoadFromFile(sourceFile)
 	if err != nil {
-		return "", fmt.Errorf("failed to read kubeconfig: %w", err)
+		return "", fmt.Errorf("failed to load kubeconfig: %w", err)
 	}
 
-	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+	context, ok := full.Contexts[ctx.Name]
+	if !ok {
+		return "", fmt.Errorf("context %q not found in %s", ctx.Name, sourceFile)
+	}
+
+	minimal := clientcmdapi.NewConfig()
+	minimal.CurrentContext = ctx.Name
+	minimal.Contexts[ctx.Name] = context
+	if cluster, ok := full.Clusters[context.Cluster]; ok {
+		minimal.Clusters[context.Cluster] = cluster
+	}
+	if user, ok := full.AuthInfos[context.AuthInfo]; ok {
+		minimal.AuthInfos[context.AuthInfo] = user
+	}
+
+	// If file exists, check its state before overwriting
+	if _, err := os.Stat(tmpPath); err == nil {
+		if err := verifyEnvVarKubeconfig(tmpPath, ctx.Name); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: overwriting kubeconfig with unexpected state: %v\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "Warning: overwriting existing kubeconfig at %s\n", tmpPath)
+		}
+	}
+
+	// Ensure writable before (re)writing — file may be read-only from a prior run
+	_ = os.Chmod(tmpPath, 0600)
+
+	if err := clientcmd.WriteToFile(*minimal, tmpPath); err != nil {
 		return "", fmt.Errorf("failed to write temp kubeconfig: %w", err)
 	}
 
-	cmd := exec.Command("kubectl", "config", "use-context", ctx.Name, "--kubeconfig", tmpPath)
-	cmd.Stdout = nil
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("failed to switch context: %w", err)
+	if err := os.Chmod(tmpPath, 0400); err != nil {
+		return "", fmt.Errorf("failed to set kubeconfig read-only: %w", err)
 	}
 
 	return tmpPath, nil
+}
+
+func verifyEnvVarKubeconfig(path, contextName string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("could not stat %s: %w", path, err)
+	}
+
+	if perm := info.Mode().Perm(); perm != 0400 {
+		return fmt.Errorf("permissions are %04o, expected 0400", perm)
+	}
+
+	existing, err := clientcmd.LoadFromFile(path)
+	if err != nil {
+		return fmt.Errorf("could not parse existing file: %w", err)
+	}
+
+	if existing.CurrentContext != contextName {
+		return fmt.Errorf("current-context is %q, expected %q", existing.CurrentContext, contextName)
+	}
+
+	if len(existing.Contexts) != 1 {
+		return fmt.Errorf("has %d contexts, expected 1", len(existing.Contexts))
+	}
+
+	return nil
 }
 
 // Switch updates the symlink and switches to the given context
