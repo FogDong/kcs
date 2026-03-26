@@ -14,10 +14,11 @@ import (
 
 const kcsConfigName = "kcs-config"
 
-// SwitchEnvVar creates a single-context kubeconfig in the user's config directory
-// for the given context and returns its path.
-// The path is deterministic per context name so repeated switches reuse the same file.
-func SwitchEnvVar(ctx parser.ContextInfo) (string, error) {
+// SwitchSession creates a single-context kubeconfig in the user's config directory
+// for the given context, creates/updates a session symlink pointing to it, and
+// returns the session symlink path. The kubeconfig is deterministic per context
+// name so repeated switches reuse the same file.
+func SwitchSession(ctx parser.ContextInfo) (string, error) {
 	sourceFile, err := filepath.Abs(ctx.SourceFile)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve source file path: %w", err)
@@ -42,56 +43,54 @@ func SwitchEnvVar(ctx parser.ContextInfo) (string, error) {
 	configPath := filepath.Join(kcsConfigDir, safeName)
 
 	// If file exists, verify its state and reuse it rather than overwriting
-	if _, err := os.Stat(configPath); err == nil {
-		if err := verifyEnvVarKubeconfig(configPath, ctx.Name); err != nil {
-			return "", fmt.Errorf("kubeconfig at %s has unexpected state: %w\n\nTo fix, run: rm %s", configPath, err, configPath)
+	if _, err := os.Stat(configPath); err != nil {
+		full, err := clientcmd.LoadFromFile(sourceFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to load kubeconfig: %w", err)
 		}
-		return configPath, nil
+
+		context, ok := full.Contexts[ctx.Name]
+		if !ok {
+			return "", fmt.Errorf("context %q not found in %s", ctx.Name, sourceFile)
+		}
+
+		minimal := clientcmdapi.NewConfig()
+		minimal.CurrentContext = ctx.Name
+		minimal.Contexts[ctx.Name] = context
+		if cluster, ok := full.Clusters[context.Cluster]; ok {
+			minimal.Clusters[context.Cluster] = cluster
+		}
+		if user, ok := full.AuthInfos[context.AuthInfo]; ok {
+			minimal.AuthInfos[context.AuthInfo] = user
+		}
+
+		if err := clientcmd.WriteToFile(*minimal, configPath); err != nil {
+			return "", fmt.Errorf("failed to write kubeconfig: %w", err)
+		}
+
+		if err := os.Chmod(configPath, 0400); err != nil {
+			return "", fmt.Errorf("failed to set kubeconfig read-only: %w", err)
+		}
+	} else if err := verifySessionKubeconfig(configPath, ctx.Name); err != nil {
+		return "", fmt.Errorf("kubeconfig at %s has unexpected state: %w\n\nTo fix, run: rm %s", configPath, err, configPath)
 	}
 
-	full, err := clientcmd.LoadFromFile(sourceFile)
+	sessionFile, err := writeSessionSymlink(configPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to load kubeconfig: %w", err)
+		return "", fmt.Errorf("failed to write session symlink: %w", err)
 	}
 
-	context, ok := full.Contexts[ctx.Name]
-	if !ok {
-		return "", fmt.Errorf("context %q not found in %s", ctx.Name, sourceFile)
-	}
-
-	minimal := clientcmdapi.NewConfig()
-	minimal.CurrentContext = ctx.Name
-	minimal.Contexts[ctx.Name] = context
-	if cluster, ok := full.Clusters[context.Cluster]; ok {
-		minimal.Clusters[context.Cluster] = cluster
-	}
-	if user, ok := full.AuthInfos[context.AuthInfo]; ok {
-		minimal.AuthInfos[context.AuthInfo] = user
-	}
-
-	if err := clientcmd.WriteToFile(*minimal, configPath); err != nil {
-		return "", fmt.Errorf("failed to write kubeconfig: %w", err)
-	}
-
-	if err := os.Chmod(configPath, 0400); err != nil {
-		return "", fmt.Errorf("failed to set kubeconfig read-only: %w", err)
-	}
-
-	if err := writeSessionState(configPath); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to write session state: %v\n", err)
-	}
-
-	return configPath, nil
+	return sessionFile, nil
 }
 
-func writeSessionState(kubeconfigPath string) error {
+func writeSessionSymlink(kubeconfigPath string) (string, error) {
 	dir := filepath.Join(xdgRuntimeDir(), "kcs", "sessions")
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		return err
+		return "", err
 	}
 	sessionFile := filepath.Join(dir, fmt.Sprintf("%d", os.Getppid()))
 	_ = os.Remove(sessionFile)
-	return os.Symlink(kubeconfigPath, sessionFile)
+	return sessionFile, os.Symlink(kubeconfigPath, sessionFile)
 }
 
 func xdgRuntimeDir() string {
@@ -104,7 +103,7 @@ func xdgRuntimeDir() string {
 	return os.TempDir()
 }
 
-func verifyEnvVarKubeconfig(path, contextName string) error {
+func verifySessionKubeconfig(path, contextName string) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		return fmt.Errorf("could not stat %s: %w", path, err)

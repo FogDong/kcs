@@ -16,7 +16,6 @@ var (
 	listFlag    bool
 	currentFlag bool
 	dirFlag     string
-	envVarFlag  bool
 )
 
 var rootCmd = &cobra.Command{
@@ -38,7 +37,6 @@ func init() {
 	rootCmd.Flags().BoolVarP(&listFlag, "list", "l", false, "List all contexts without interactive selection")
 	rootCmd.Flags().BoolVarP(&currentFlag, "current", "c", false, "Show current context")
 	rootCmd.Flags().StringVarP(&dirFlag, "dir", "d", "", "Custom kubeconfig directory (default: ~/.kube)")
-	rootCmd.Flags().BoolVarP(&envVarFlag, "env", "e", false, "Write kubeconfig to /tmp and print 'export KUBECONFIG=...' for eval")
 	rootCmd.AddCommand(initCmd)
 }
 
@@ -46,6 +44,10 @@ func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
+}
+
+func sessionModeEnabled() bool {
+	return os.Getenv("KCS_SESSION") != ""
 }
 
 func run(cmd *cobra.Command, args []string) {
@@ -118,14 +120,14 @@ func run(cmd *cobra.Command, args []string) {
 	}
 
 	// Switch to selected context
-	if envVarFlag {
-		tmpPath, err := switcher.SwitchEnvVar(selected)
+	if sessionModeEnabled() {
+		sessionPath, err := switcher.SwitchSession(selected)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error switching context: %v\n", err)
 			os.Exit(1)
 		}
 		fmt.Fprintf(os.Stderr, "✓ Switched to %s\n", selected.Cluster)
-		fmt.Printf("export KUBECONFIG='%s'\n", strings.ReplaceAll(tmpPath, "'", "'\\''"))
+		fmt.Printf("export KUBECONFIG='%s'\n", strings.ReplaceAll(sessionPath, "'", "'\\''"))
 		return
 	}
 
@@ -147,13 +149,17 @@ func showCurrentContext(kubeDir string) {
 }
 
 func runInit(cmd *cobra.Command, args []string) {
-	if envVarFlag {
-		fmt.Println("Add the following function to your shell configuration file (~/.zshrc or ~/.bashrc):")
+	if sessionModeEnabled() {
+		fmt.Println("Add to your shell configuration (~/.zshrc or ~/.bashrc):")
 		fmt.Println()
-		fmt.Println(`  kcs() { eval "$(command kcs --env "$@")"; }`)
+		fmt.Println(`  export KCS_SESSION=1`)
+		fmt.Println(`  eval "$(kcs)"  # initializes KUBECONFIG to your session symlink`)
 		fmt.Println()
-		fmt.Println("Then reload your shell or run:")
-		fmt.Println("  source ~/.zshrc  # or source ~/.bashrc")
+		fmt.Println("After initialization, kcs updates the symlink directly—no eval needed.")
+		fmt.Println()
+		fmt.Println("With mise, add to your mise.toml instead:")
+		fmt.Println(`  [env]`)
+		fmt.Println(`  _.kcs = {}`)
 		return
 	}
 
