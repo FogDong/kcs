@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/FogDong/kcs/internal/parser"
@@ -15,6 +16,7 @@ var (
 	listFlag    bool
 	currentFlag bool
 	dirFlag     string
+	envVarFlag  bool
 )
 
 var rootCmd = &cobra.Command{
@@ -36,6 +38,7 @@ func init() {
 	rootCmd.Flags().BoolVarP(&listFlag, "list", "l", false, "List all contexts without interactive selection")
 	rootCmd.Flags().BoolVarP(&currentFlag, "current", "c", false, "Show current context")
 	rootCmd.Flags().StringVarP(&dirFlag, "dir", "d", "", "Custom kubeconfig directory (default: ~/.kube)")
+	rootCmd.Flags().BoolVarP(&envVarFlag, "env", "e", false, "Write kubeconfig to /tmp and print 'export KUBECONFIG=...' for eval")
 	rootCmd.AddCommand(initCmd)
 }
 
@@ -115,6 +118,17 @@ func run(cmd *cobra.Command, args []string) {
 	}
 
 	// Switch to selected context
+	if envVarFlag {
+		tmpPath, err := switcher.SwitchEnvVar(selected)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error switching context: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "✓ Switched to %s\n", selected.Cluster)
+		fmt.Printf("export KUBECONFIG='%s'\n", strings.ReplaceAll(tmpPath, "'", "'\\''"))
+		return
+	}
+
 	if err := switcher.Switch(kubeDir, selected); err != nil {
 		fmt.Fprintf(os.Stderr, "Error switching context: %v\n", err)
 		os.Exit(1)
@@ -133,6 +147,16 @@ func showCurrentContext(kubeDir string) {
 }
 
 func runInit(cmd *cobra.Command, args []string) {
+	if envVarFlag {
+		fmt.Println("Add the following function to your shell configuration file (~/.zshrc or ~/.bashrc):")
+		fmt.Println()
+		fmt.Println(`  kcs() { eval "$(command kcs --env "$@")"; }`)
+		fmt.Println()
+		fmt.Println("Then reload your shell or run:")
+		fmt.Println("  source ~/.zshrc  # or source ~/.bashrc")
+		return
+	}
+
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: cannot determine home directory: %v\n", err)

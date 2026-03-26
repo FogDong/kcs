@@ -5,11 +5,48 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/FogDong/kcs/internal/parser"
 )
 
 const kcsConfigName = "kcs-config"
+
+// SwitchEnvVar creates a kubeconfig in /tmp for the given context and returns its path.
+// The path is deterministic per context name so repeated switches reuse the same file.
+func SwitchEnvVar(ctx parser.ContextInfo) (string, error) {
+	sourceFile, err := filepath.Abs(ctx.SourceFile)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve source file path: %w", err)
+	}
+
+	// Sanitize context name for use in a filename
+	safeName := strings.Map(func(r rune) rune {
+		if r == '/' || r == '\\' || r == ':' || r == '*' || r == '?' || r == '"' || r == '<' || r == '>' || r == '|' {
+			return '-'
+		}
+		return r
+	}, ctx.Name)
+	tmpPath := filepath.Join(os.TempDir(), "kcs-"+safeName)
+
+	data, err := os.ReadFile(sourceFile)
+	if err != nil {
+		return "", fmt.Errorf("failed to read kubeconfig: %w", err)
+	}
+
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+		return "", fmt.Errorf("failed to write temp kubeconfig: %w", err)
+	}
+
+	cmd := exec.Command("kubectl", "config", "use-context", ctx.Name, "--kubeconfig", tmpPath)
+	cmd.Stdout = nil
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to switch context: %w", err)
+	}
+
+	return tmpPath, nil
+}
 
 // Switch updates the symlink and switches to the given context
 func Switch(kubeDir string, ctx parser.ContextInfo) error {
