@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/FogDong/kcs/internal/parser"
@@ -43,6 +44,10 @@ func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
+}
+
+func sessionModeEnabled() bool {
+	return os.Getenv("KCS_SESSION") != ""
 }
 
 func run(cmd *cobra.Command, args []string) {
@@ -115,6 +120,17 @@ func run(cmd *cobra.Command, args []string) {
 	}
 
 	// Switch to selected context
+	if sessionModeEnabled() {
+		sessionPath, err := switcher.SwitchSession(selected)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error switching context: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "✓ Switched to %s\n", selected.Cluster)
+		fmt.Printf("export KUBECONFIG='%s'\n", strings.ReplaceAll(sessionPath, "'", "'\\''"))
+		return
+	}
+
 	if err := switcher.Switch(kubeDir, selected); err != nil {
 		fmt.Fprintf(os.Stderr, "Error switching context: %v\n", err)
 		os.Exit(1)
@@ -133,6 +149,20 @@ func showCurrentContext(kubeDir string) {
 }
 
 func runInit(cmd *cobra.Command, args []string) {
+	if sessionModeEnabled() {
+		fmt.Println("Add to your shell configuration (~/.zshrc or ~/.bashrc):")
+		fmt.Println()
+		fmt.Println(`  export KCS_SESSION=1`)
+		fmt.Println(`  eval "$(kcs)"  # initializes KUBECONFIG to your session symlink`)
+		fmt.Println()
+		fmt.Println("After initialization, kcs updates the symlink directly—no eval needed.")
+		fmt.Println()
+		fmt.Println("With mise, add to your mise.toml instead:")
+		fmt.Println(`  [env]`)
+		fmt.Println(`  _.kcs = {}`)
+		return
+	}
+
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: cannot determine home directory: %v\n", err)
