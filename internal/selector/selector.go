@@ -35,9 +35,12 @@ func Filter(contexts []parser.ContextInfo, query string) []parser.ContextInfo {
 		return nil
 	}
 
-	result := make([]parser.ContextInfo, len(matches))
-	for i, match := range matches {
-		result[i] = contexts[match.Index]
+	threshold := matches[0].Score / 2
+	var result []parser.ContextInfo
+	for _, match := range matches {
+		if match.Score >= threshold {
+			result = append(result, contexts[match.Index])
+		}
 	}
 	return result
 }
