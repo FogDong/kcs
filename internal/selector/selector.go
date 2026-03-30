@@ -58,6 +58,19 @@ func Select(contexts []parser.ContextInfo, searchQuery string) (parser.ContextIn
 		return filtered[0], nil
 	}
 
+	// If the query exactly matches a context name or cluster name, select it directly
+	if searchQuery != "" {
+		var exactMatches []parser.ContextInfo
+		for _, ctx := range filtered {
+			if ctx.Name == searchQuery || ctx.Cluster == searchQuery {
+				exactMatches = append(exactMatches, ctx)
+			}
+		}
+		if len(exactMatches) == 1 {
+			return exactMatches[0], nil
+		}
+	}
+
 	// Create display items
 	items := make([]string, len(filtered))
 	for i, ctx := range filtered {
