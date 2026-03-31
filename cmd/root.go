@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -127,7 +128,23 @@ func run(cmd *cobra.Command, args []string) {
 			os.Exit(1)
 		}
 		fmt.Fprintf(os.Stderr, "✓ Switched to %s\n", selected.Cluster)
-		fmt.Printf("export KUBECONFIG='%s'\n", strings.ReplaceAll(sessionPath, "'", "'\\''"))
+		// Build KUBECONFIG with session path first, then existing non-session entries
+		// so that tools still work if the session file is missing (e.g. after reboot).
+		sessionsDir := filepath.Dir(sessionPath)
+		parts := []string{sessionPath}
+		for _, p := range filepath.SplitList(os.Getenv("KUBECONFIG")) {
+			if p != "" && !strings.HasPrefix(p, sessionsDir+string(filepath.Separator)) {
+				parts = append(parts, p)
+			}
+		}
+		if len(parts) == 1 {
+			homeDir, err := os.UserHomeDir()
+			if err == nil {
+				parts = append(parts, filepath.Join(homeDir, ".kube", "config"))
+			}
+		}
+		kubeconfig := strings.Join(parts, string(filepath.ListSeparator))
+		fmt.Printf("export KUBECONFIG='%s'\n", strings.ReplaceAll(kubeconfig, "'", "'\\''"))
 		return
 	}
 
