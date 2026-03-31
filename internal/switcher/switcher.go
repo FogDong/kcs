@@ -42,7 +42,7 @@ func SwitchSession(ctx parser.ContextInfo) (string, error) {
 	}, ctx.Name)
 	configPath := filepath.Join(kcsConfigDir, safeName)
 
-	cachedInfo, statErr := os.Stat(configPath)
+	_, statErr := os.Stat(configPath)
 	if os.IsNotExist(statErr) {
 		full, err := clientcmd.LoadFromFile(sourceFile)
 		if err != nil {
@@ -75,20 +75,6 @@ func SwitchSession(ctx parser.ContextInfo) (string, error) {
 		return "", fmt.Errorf("failed to stat kubeconfig: %w", statErr)
 	} else if err := verifySessionKubeconfig(configPath, ctx.Name); err != nil {
 		return "", fmt.Errorf("kubeconfig at %s has unexpected state: %w\n\nTo fix, run: rm %s", configPath, err, configPath)
-	} else {
-		sourceInfo, err := os.Stat(sourceFile)
-		if err != nil {
-			return "", fmt.Errorf("failed to stat source kubeconfig: %w", err)
-		}
-		if sourceInfo.ModTime().After(cachedInfo.ModTime()) {
-			if err := os.Chmod(configPath, 0600); err != nil {
-				return "", fmt.Errorf("failed to make cached kubeconfig writable for refresh: %w", err)
-			}
-			if err := os.Remove(configPath); err != nil {
-				return "", fmt.Errorf("failed to remove stale cached kubeconfig: %w", err)
-			}
-			return SwitchSession(ctx)
-		}
 	}
 
 	sessionFile, err := writeSessionSymlink(configPath)
