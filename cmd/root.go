@@ -55,33 +55,67 @@ func sessionModeEnabled() bool {
 	return os.Getenv("KCS_SESSION") != ""
 }
 
-func isKCSConfigured(kubeDir string) bool {
+type configStatus int
+
+const (
+	configOK configStatus = iota
+	configUnset
+	configNotKCS
+	configWrongSession   // KCS_SESSION set, KUBECONFIG has a different session path
+	configStaticInSession // KCS_SESSION set, KUBECONFIG has the static kcs-config path
+)
+
+func checkConfig(kubeDir string) configStatus {
 	kubeconfig := os.Getenv("KUBECONFIG")
 	if kubeconfig == "" {
+		return configUnset
+	}
+	paths := strings.Split(kubeconfig, ":")
+	contains := func(s string) bool {
+		for _, p := range paths {
+			if p == s {
+				return true
+			}
+		}
 		return false
 	}
-	var target string
+
+	staticPath := kubeDir + "/kcs-config"
 	if sessionModeEnabled() {
-		target = switcher.SessionPath()
-	} else {
-		target = kubeDir + "/kcs-config"
-	}
-	for _, p := range strings.Split(kubeconfig, ":") {
-		if p == target {
-			return true
+		if contains(switcher.SessionPath()) {
+			return configOK
 		}
+		if contains(staticPath) {
+			return configStaticInSession
+		}
+		return configWrongSession
 	}
-	return false
+
+	if contains(staticPath) {
+		return configOK
+	}
+	return configNotKCS
 }
 
-func printSetupHelp() {
-	fmt.Fprintln(os.Stderr, "KUBECONFIG is not configured for kcs.")
-	fmt.Fprintln(os.Stderr, "Add to your shell configuration (~/.zshrc or ~/.bashrc):")
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "  eval $(kcs init)            # all shells share one context")
-	fmt.Fprintln(os.Stderr, "  eval $(kcs init --session)  # each shell has its own context")
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "For session mode, also add: export KCS_SESSION=1")
+func printSetupHelp(kubeDir string) {
+	switch checkConfig(kubeDir) {
+	case configUnset:
+		fmt.Fprintln(os.Stderr, "KUBECONFIG is not set. Add to your shell configuration (~/.zshrc or ~/.bashrc):")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "  eval $(kcs init)            # all shells share one context")
+		fmt.Fprintln(os.Stderr, "  eval $(kcs init --session)  # per-shell session (also set KCS_SESSION=1)")
+	case configNotKCS:
+		fmt.Fprintln(os.Stderr, "KUBECONFIG is not managed by kcs. Add to your shell configuration (~/.zshrc or ~/.bashrc):")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "  eval $(kcs init)            # all shells share one context")
+		fmt.Fprintln(os.Stderr, "  eval $(kcs init --session)  # per-shell session (also set KCS_SESSION=1)")
+	case configStaticInSession:
+		fmt.Fprintf(os.Stderr, "Session mode is enabled (KCS_SESSION=%s) but KUBECONFIG points to the shared config.\n", os.Getenv("KCS_SESSION"))
+		fmt.Fprintln(os.Stderr, "Run: eval $(kcs init --session)")
+	case configWrongSession:
+		fmt.Fprintf(os.Stderr, "Session mode is enabled (KCS_SESSION=%s) but KUBECONFIG does not point to this session.\n", os.Getenv("KCS_SESSION"))
+		fmt.Fprintln(os.Stderr, "Run: eval $(kcs init --session)")
+	}
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "With mise:")
 	fmt.Fprintln(os.Stderr, "  [env]")
@@ -148,8 +182,8 @@ func run(cmd *cobra.Command, args []string) {
 	}
 
 	// Require KUBECONFIG to be configured before switching
-	if !isKCSConfigured(kubeDir) {
-		printSetupHelp()
+	if checkConfig(kubeDir) != configOK {
+		printSetupHelp(kubeDir)
 		os.Exit(1)
 	}
 
