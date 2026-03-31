@@ -181,6 +181,9 @@ func showCurrentContext(kubeDir string) {
 
 func runInit(cmd *cobra.Command, args []string) {
 	if sessionModeEnabled() || initSession {
+		if !sessionModeEnabled() {
+			fmt.Printf("export KCS_SESSION='%d'\n", os.Getppid())
+		}
 		sessionPath := switcher.SessionPath()
 		fmt.Printf("export KUBECONFIG='%s'\n", strings.ReplaceAll(sessionPath, "'", "'\\''"))
 		return
