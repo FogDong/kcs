@@ -7,7 +7,7 @@ A fast CLI tool to switch between Kubernetes contexts across multiple kubeconfig
 - Scans all kubeconfig files in `~/.kube/`
 - Interactive fuzzy search to find contexts quickly
 - Supports both YAML and JSON kubeconfig formats
-- Leaves your original `~/.kube/config` untouched
+- Switches contexts without modifying your kubeconfig files directly
 - Works immediately after switching (no shell restart needed)
 
 ## Installation
@@ -99,7 +99,7 @@ prod-cluster (kubeconfig: config)
    - Creates a symlink `~/.kube/kcs-config` → selected kubeconfig file
    - Runs `kubectl config use-context` to switch
 
-Your original `~/.kube/config` is never modified.
+Note: `kubectl config use-context` updates the `current-context` field in the kubeconfig file being switched to.
 
 ## Command Reference
 

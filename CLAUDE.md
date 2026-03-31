@@ -30,7 +30,7 @@ kcs/
 ### Context Switching
 1. Creates symlink `~/.kube/kcs-config` → selected kubeconfig file
 2. Runs `kubectl config use-context --kubeconfig ~/.kube/kcs-config`
-3. Original `~/.kube/config` is never modified
+3. `kubectl config use-context` updates `current-context` in the selected kubeconfig file
 
 ### File Discovery
 - Scans `~/.kube/` for valid kubeconfig files
