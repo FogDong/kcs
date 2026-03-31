@@ -95,11 +95,9 @@ prod-cluster (kubeconfig: config)
 
 1. `kcs` scans `~/.kube/` for all valid kubeconfig files
 2. Parses and aggregates all contexts from all files
-3. When you select a context, it:
-   - Creates a symlink `~/.kube/kcs-config` → selected kubeconfig file
-   - Runs `kubectl config use-context` to switch
+3. When you select a context, it writes a minimal single-context kubeconfig to `~/.kube/kcs-config`
 
-Your original `~/.kube/config` is never modified.
+Your original kubeconfig files are never modified.
 
 ## Command Reference
 
