@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -225,22 +226,54 @@ func showCurrentContext(kubeDir string) {
 }
 
 func runInit(cmd *cobra.Command, args []string) {
-	if sessionModeEnabled() || initSession {
-		if !sessionModeEnabled() {
-			fmt.Printf("export KCS_SESSION='%d'\n", os.Getppid())
-		}
-		sessionPath := switcher.SessionPath()
-		fmt.Printf("export KUBECONFIG='%s'\n", strings.ReplaceAll(sessionPath, "'", "'\\''"))
-		return
-	}
-
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: cannot determine home directory: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("export KUBECONFIG='%s/.kube/kcs-config'\n", homeDir)
+	staticKCSPath := filepath.Join(homeDir, ".kube", "kcs-config")
+
+	if sessionModeEnabled() || initSession {
+		if !sessionModeEnabled() {
+			fmt.Printf("export KCS_SESSION='%d'\n", os.Getppid())
+		}
+		sessionPath := switcher.SessionPath()
+		sessionsDir := filepath.Dir(sessionPath)
+		fallback := kubeconfigFallback(staticKCSPath, sessionsDir, homeDir)
+		kubeconfig := sessionPath + ":" + fallback
+		fmt.Printf("export KUBECONFIG='%s'\n", strings.ReplaceAll(kubeconfig, "'", "'\\''"))
+		return
+	}
+
+	fmt.Printf("export KUBECONFIG='%s'\n", strings.ReplaceAll(staticKCSPath, "'", "'\\''"))
+}
+
+// kubeconfigFallback returns the user's existing KUBECONFIG with kcs-managed paths
+// removed, or ~/.kube/config if nothing non-kcs remains.
+func kubeconfigFallback(staticKCSPath, sessionsDir, homeDir string) string {
+	existing := os.Getenv("KUBECONFIG")
+	defaultConfig := filepath.Join(homeDir, ".kube", "config")
+
+	if existing == "" {
+		return defaultConfig
+	}
+
+	var kept []string
+	for _, p := range strings.Split(existing, ":") {
+		if p == "" || p == staticKCSPath {
+			continue
+		}
+		if strings.HasPrefix(p, sessionsDir+string(filepath.Separator)) || p == sessionsDir {
+			continue
+		}
+		kept = append(kept, p)
+	}
+
+	if len(kept) == 0 {
+		return defaultConfig
+	}
+	return strings.Join(kept, ":")
 }
 
 func listContexts(contexts []parser.ContextInfo, searchQuery string) {
