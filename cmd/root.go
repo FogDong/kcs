@@ -16,10 +16,12 @@ import (
 var version = "dev"
 
 var (
-	listFlag    bool
-	currentFlag bool
-	dirFlag     string
-	initSession bool
+	listFlag       bool
+	currentFlag    bool
+	dirFlag        string
+	initSession    bool
+	persistentFlag bool
+	sessionFlag    bool
 )
 
 var rootCmd = &cobra.Command{
@@ -42,7 +44,10 @@ func init() {
 	rootCmd.Flags().BoolVarP(&listFlag, "list", "l", false, "List all contexts without interactive selection")
 	rootCmd.Flags().BoolVarP(&currentFlag, "current", "c", false, "Show current context")
 	rootCmd.Flags().StringVarP(&dirFlag, "dir", "d", "", "Custom kubeconfig directory (default: ~/.kube)")
-	initCmd.Flags().BoolVarP(&initSession, "session", "s", false, "Output session-scoped KUBECONFIG export")
+	rootCmd.Flags().BoolVarP(&persistentFlag, "persistent", "p", false, "Update shared kcs-config (overrides KCS_DEFAULT_SESSION)")
+	rootCmd.Flags().BoolVarP(&sessionFlag, "session", "s", false, "Update session config (overrides default persistent behavior)")
+	rootCmd.MarkFlagsMutuallyExclusive("persistent", "session")
+	initCmd.Flags().BoolVarP(&initSession, "session", "s", false, "Also export KCS_DEFAULT_SESSION to make session switching the default")
 	rootCmd.AddCommand(initCmd)
 }
 
@@ -52,8 +57,14 @@ func Execute() {
 	}
 }
 
-func sessionModeEnabled() bool {
+// sessionIDSet reports whether KCS_SESSION is set, meaning the session path is pinned.
+func sessionIDSet() bool {
 	return os.Getenv("KCS_SESSION") != ""
+}
+
+// defaultSessionEnabled reports whether session switching is the default behavior.
+func defaultSessionEnabled() bool {
+	return os.Getenv("KCS_DEFAULT_SESSION") != ""
 }
 
 type configStatus int
@@ -62,8 +73,7 @@ const (
 	configOK configStatus = iota
 	configUnset
 	configNotKCS
-	configWrongSession   // KCS_SESSION set, KUBECONFIG has a different session path
-	configStaticInSession // KCS_SESSION set, KUBECONFIG has the static kcs-config path
+	configMissingSession // has kcs-config but not the session path
 )
 
 func checkConfig(kubeDir string) configStatus {
@@ -82,18 +92,14 @@ func checkConfig(kubeDir string) configStatus {
 	}
 
 	staticPath := kubeDir + "/kcs-config"
-	if sessionModeEnabled() {
-		if contains(switcher.SessionPath()) {
-			return configOK
-		}
-		if contains(staticPath) {
-			return configStaticInSession
-		}
-		return configWrongSession
-	}
+	hasStatic := contains(staticPath)
+	hasSession := contains(switcher.SessionPath())
 
-	if contains(staticPath) {
+	if hasStatic && hasSession {
 		return configOK
+	}
+	if hasStatic {
+		return configMissingSession
 	}
 	return configNotKCS
 }
@@ -103,19 +109,16 @@ func printSetupHelp(kubeDir string) {
 	case configUnset:
 		fmt.Fprintln(os.Stderr, "KUBECONFIG is not set. Add to your shell configuration (~/.zshrc or ~/.bashrc):")
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "  eval $(kcs init)            # all shells share one context")
-		fmt.Fprintln(os.Stderr, "  eval $(kcs init --session)  # per-shell session (also set KCS_SESSION=1)")
+		fmt.Fprintln(os.Stderr, "  eval $(kcs init)            # persistent switching by default")
+		fmt.Fprintln(os.Stderr, "  eval $(kcs init --session)  # session switching by default")
 	case configNotKCS:
 		fmt.Fprintln(os.Stderr, "KUBECONFIG is not managed by kcs. Add to your shell configuration (~/.zshrc or ~/.bashrc):")
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "  eval $(kcs init)            # all shells share one context")
-		fmt.Fprintln(os.Stderr, "  eval $(kcs init --session)  # per-shell session (also set KCS_SESSION=1)")
-	case configStaticInSession:
-		fmt.Fprintf(os.Stderr, "Session mode is enabled (KCS_SESSION=%s) but KUBECONFIG points to the shared config.\n", os.Getenv("KCS_SESSION"))
-		fmt.Fprintln(os.Stderr, "Run: eval $(kcs init --session)")
-	case configWrongSession:
-		fmt.Fprintf(os.Stderr, "Session mode is enabled (KCS_SESSION=%s) but KUBECONFIG does not point to this session.\n", os.Getenv("KCS_SESSION"))
-		fmt.Fprintln(os.Stderr, "Run: eval $(kcs init --session)")
+		fmt.Fprintln(os.Stderr, "  eval $(kcs init)            # persistent switching by default")
+		fmt.Fprintln(os.Stderr, "  eval $(kcs init --session)  # session switching by default")
+	case configMissingSession:
+		fmt.Fprintln(os.Stderr, "KUBECONFIG is missing the session path. Re-run:")
+		fmt.Fprintln(os.Stderr, "  eval $(kcs init)")
 	}
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "With mise:")
@@ -198,8 +201,11 @@ func run(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// Switch to selected context
-	if sessionModeEnabled() {
+	// Determine whether to switch session or persistent config.
+	// Explicit flags take priority; otherwise fall back to KCS_DEFAULT_SESSION.
+	useSession := !persistentFlag && (sessionFlag || defaultSessionEnabled())
+
+	if useSession {
 		if _, err := switcher.SwitchSession(selected); err != nil {
 			fmt.Fprintf(os.Stderr, "Error switching context: %v\n", err)
 			os.Exit(1)
@@ -234,46 +240,19 @@ func runInit(cmd *cobra.Command, args []string) {
 
 	staticKCSPath := filepath.Join(homeDir, ".kube", "kcs-config")
 
-	if sessionModeEnabled() || initSession {
-		if !sessionModeEnabled() {
-			fmt.Printf("export KCS_SESSION='%d'\n", os.Getppid())
-		}
-		sessionPath := switcher.SessionPath()
-		sessionsDir := filepath.Dir(sessionPath)
-		fallback := kubeconfigFallback(staticKCSPath, sessionsDir, homeDir)
-		kubeconfig := sessionPath + ":" + fallback
-		fmt.Printf("export KUBECONFIG='%s'\n", strings.ReplaceAll(kubeconfig, "'", "'\\''"))
-		return
+	// Pin KCS_SESSION to the current shell's PID if not already set,
+	// so the session path is stable for the lifetime of this shell.
+	if !sessionIDSet() {
+		fmt.Printf("export KCS_SESSION='%d'\n", os.Getppid())
 	}
 
-	fmt.Printf("export KUBECONFIG='%s'\n", strings.ReplaceAll(staticKCSPath, "'", "'\\''"))
-}
-
-// kubeconfigFallback returns the user's existing KUBECONFIG with kcs-managed paths
-// removed, or ~/.kube/config if nothing non-kcs remains.
-func kubeconfigFallback(staticKCSPath, sessionsDir, homeDir string) string {
-	existing := os.Getenv("KUBECONFIG")
-	defaultConfig := filepath.Join(homeDir, ".kube", "config")
-
-	if existing == "" {
-		return defaultConfig
+	if initSession {
+		fmt.Printf("export KCS_DEFAULT_SESSION='1'\n")
 	}
 
-	var kept []string
-	for _, p := range strings.Split(existing, ":") {
-		if p == "" || p == staticKCSPath {
-			continue
-		}
-		if strings.HasPrefix(p, sessionsDir+string(filepath.Separator)) || p == sessionsDir {
-			continue
-		}
-		kept = append(kept, p)
-	}
-
-	if len(kept) == 0 {
-		return defaultConfig
-	}
-	return strings.Join(kept, ":")
+	sessionPath := switcher.SessionPath()
+	kubeconfig := sessionPath + ":" + staticKCSPath
+	fmt.Printf("export KUBECONFIG='%s'\n", strings.ReplaceAll(kubeconfig, "'", "'\\''"))
 }
 
 func listContexts(contexts []parser.ContextInfo, searchQuery string) {

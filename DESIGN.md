@@ -21,8 +21,8 @@
 │                                                              │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │                    Switcher                           │   │
-│  │  - Create symlink ~/.kube/kcs-config → source file    │   │
-│  │  - Execute kubectl config use-context                 │   │
+│  │  - Persistent: symlink ~/.kube/kcs-config → source    │   │
+│  │  - Session: write minimal kubeconfig + session link   │   │
 │  └──────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -32,16 +32,54 @@
 1. **Scan**: Find all kubeconfig files in `~/.kube/` (supports YAML and JSON)
 2. **Parse**: Extract contexts using `k8s.io/client-go`
 3. **Select**: Interactive fuzzy search with `promptui`
-4. **Switch**: Create symlink and run `kubectl config use-context`
+4. **Switch**: Persistent or session switch (see below)
 
-### Symlink Approach
+## Switching Modes
 
-`kcs` manages `~/.kube/kcs-config` as a symlink pointing to the selected kubeconfig file. Users set `KUBECONFIG=~/.kube/kcs-config` in their shell, and `kcs` updates the symlink target when switching contexts.
+### Persistent mode
 
-This approach:
-- Leaves original `~/.kube/config` untouched
-- Avoids merging configs (prevents conflicts)
-- Works with any number of kubeconfig files
+`kcs` manages `~/.kube/kcs-config` as a symlink pointing to the selected
+kubeconfig file, then runs `kubectl config use-context` to set
+`current-context` in that file. All shells sharing this file see the change.
+
+### Session mode
+
+`kcs` writes a minimal single-context kubeconfig to
+`~/.config/kcs/<context-name>` (created once, reused on subsequent switches to
+the same context) and updates a per-shell session symlink at
+`$XDG_RUNTIME_DIR/kcs/sessions/<KCS_SESSION>`.
+
+Because `KUBECONFIG` is set to `<session-path>:~/.kube/kcs-config`, kubectl
+resolves the session symlink first. Switching sessions in one shell has no
+effect on other shells.
+
+### Mode selection
+
+| Condition | Behavior |
+|-----------|----------|
+| Default (no env, no flags) | Persistent |
+| `KCS_DEFAULT_SESSION` set | Session |
+| `-s` / `--session` flag | Session (overrides env) |
+| `-p` / `--persistent` flag | Persistent (overrides env) |
+
+## Shell Initialization (`kcs init`)
+
+`kcs init` outputs shell exports for use with `eval $(kcs init)`:
+
+- Always pins `KCS_SESSION` to the shell's PID (if unset), so the session path
+  is stable for the lifetime of the shell
+- Always sets `KUBECONFIG=<session-path>:~/.kube/kcs-config`
+- `--session` additionally exports `KCS_DEFAULT_SESSION=1`
+
+The session symlink may not exist initially; kubectl silently skips missing
+entries in `KUBECONFIG`, so the fallback to `kcs-config` is automatic.
+
+## Environment Variables
+
+| Variable | Purpose |
+|----------|---------|
+| `KCS_SESSION` | Session identifier used to compute the session symlink path. Set to the shell PID by `kcs init`. |
+| `KCS_DEFAULT_SESSION` | When non-empty, makes session switching the default behavior. Set by `kcs init --session`. |
 
 ## Project Structure
 
