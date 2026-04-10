@@ -17,7 +17,7 @@ type contextList []parser.ContextInfo
 
 func (c contextList) String(i int) string {
 	ctx := c[i]
-	return fmt.Sprintf("%s %s %s", ctx.Cluster, ctx.SourceFileName, ctx.Namespace)
+	return fmt.Sprintf("%s %s %s %s", ctx.Name, ctx.Cluster, ctx.SourceFileName, ctx.Namespace)
 }
 
 func (c contextList) Len() int {
@@ -78,15 +78,15 @@ func Select(contexts []parser.ContextInfo, searchQuery string) (parser.ContextIn
 		if ns == "" {
 			ns = "default"
 		}
-		items[i] = fmt.Sprintf("[%s] %s (ns: %s)",
-			ctx.SourceFileName, ctx.Cluster, ns)
+		items[i] = fmt.Sprintf("[%s] %s / %s (ns: %s)",
+			ctx.SourceFileName, ctx.Name, ctx.Cluster, ns)
 	}
 
 	// Setup promptui
 	searcher := func(input string, index int) bool {
 		ctx := filtered[index]
-		searchStr := strings.ToLower(fmt.Sprintf("%s %s %s",
-			ctx.Cluster, ctx.SourceFileName, ctx.Namespace))
+		searchStr := strings.ToLower(fmt.Sprintf("%s %s %s %s",
+			ctx.Name, ctx.Cluster, ctx.SourceFileName, ctx.Namespace))
 		input = strings.ToLower(input)
 		return strings.Contains(searchStr, input)
 	}
