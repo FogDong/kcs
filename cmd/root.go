@@ -140,7 +140,11 @@ func run(cmd *cobra.Command, args []string) {
 
 	// Handle --current flag
 	if currentFlag {
-		showCurrentContext(kubeDir)
+		if checkConfig(kubeDir) != configOK {
+			printSetupHelp(kubeDir)
+			os.Exit(1)
+		}
+		showCurrentContext()
 		return
 	}
 
@@ -222,8 +226,8 @@ func run(cmd *cobra.Command, args []string) {
 	fmt.Fprintf(os.Stderr, "✓ Switched to %s\n", selected.Cluster)
 }
 
-func showCurrentContext(kubeDir string) {
-	ctx, file, err := switcher.GetCurrentContext(kubeDir)
+func showCurrentContext() {
+	ctx, file, err := switcher.GetCurrentContext()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

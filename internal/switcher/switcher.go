@@ -203,49 +203,34 @@ func switchContext(kubeDir, name string) error {
 	return nil
 }
 
-// GetCurrentContext returns the current context name and kubeconfig file
-func GetCurrentContext(kubeDir string) (string, string, error) {
-	kcsConfigPath := filepath.Join(kubeDir, kcsConfigName)
-
-	// Check if kcs-config exists
-	info, err := os.Lstat(kcsConfigPath)
+// GetCurrentContext returns the current context name and the kubeconfig file
+// it was loaded from, using the standard KUBECONFIG loading rules.
+func GetCurrentContext() (string, string, error) {
+	rules := clientcmd.NewDefaultClientConfigLoadingRules()
+	config, err := rules.Load()
 	if err != nil {
-		if os.IsNotExist(err) {
-			return "", "", fmt.Errorf("kcs not initialized. Run 'kcs init' first")
-		}
-		return "", "", err
+		return "", "", fmt.Errorf("failed to load kubeconfig: %w", err)
+	}
+	if config.CurrentContext == "" {
+		return "", "", fmt.Errorf("no current context set")
 	}
 
-	// Resolve symlink if needed
-	actualPath := kcsConfigPath
-	if info.Mode()&os.ModeSymlink != 0 {
-		actualPath, err = os.Readlink(kcsConfigPath)
+	// Find which KUBECONFIG file provides the current context.
+	var source string
+	for _, path := range rules.GetLoadingPrecedence() {
+		resolved, err := filepath.EvalSymlinks(path)
 		if err != nil {
-			return "", "", fmt.Errorf("failed to read symlink: %w", err)
+			continue
 		}
-		// Make absolute if relative
-		if !filepath.IsAbs(actualPath) {
-			actualPath = filepath.Join(kubeDir, actualPath)
+		cfg, err := clientcmd.LoadFromFile(resolved)
+		if err != nil {
+			continue
+		}
+		if _, ok := cfg.Contexts[config.CurrentContext]; ok {
+			source = filepath.Base(resolved)
+			break
 		}
 	}
 
-	// Get current context using kubectl
-	cmd := exec.Command("kubectl", "config", "current-context", "--kubeconfig", kcsConfigPath)
-	output, err := cmd.Output()
-	if err != nil {
-		return "", "", fmt.Errorf("failed to get current context: %w", err)
-	}
-
-	contextName := string(output)
-	// Trim newline
-	if len(contextName) > 0 && contextName[len(contextName)-1] == '\n' {
-		contextName = contextName[:len(contextName)-1]
-	}
-
-	return contextName, filepath.Base(actualPath), nil
-}
-
-// GetKcsConfigPath returns the path to kcs-config
-func GetKcsConfigPath(kubeDir string) string {
-	return filepath.Join(kubeDir, kcsConfigName)
+	return config.CurrentContext, source, nil
 }
